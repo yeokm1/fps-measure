@@ -1,11 +1,11 @@
 package com.yeokhengmeng.fpsmeasure;
 
 import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -20,16 +20,21 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
 
+	private static final int NO_FPS_CALCULATED = -1;
 	public static final String TAG = "MainActivity";
-	public static final String FPS_COMMAND = "dumpsys SurfaceFlinger --latency SurfaceView";
+	public static final String FPS_COMMAND = "dumpsys SurfaceFlinger --latency SurfaceView\n";
 	public TextView outputView;
 
 	public static final float TIME_INTERVAL_NANO_SECONDS = 1000000000;
+	public static final int BUFF_LEN = 1000;
+	
+	private long totalFramesPerSeconds = 0;
+	private int totalFrameCaptures = 0;
+	
 
 	Process process;
-	OutputStream stdin;
+	DataOutputStream stdin;
 	InputStream stdout;
-	BufferedReader reader;
 
 	private ScheduledExecutorService scheduler;
 	@Override
@@ -42,6 +47,14 @@ public class MainActivity extends Activity {
 	public void startButtonPress(View view){
 		Toast.makeText(this, "Started", Toast.LENGTH_SHORT).show();
 
+		try {
+			process = Runtime.getRuntime().exec("su");
+			stdin = new DataOutputStream(process.getOutputStream());
+			stdout = process.getInputStream();
+		} catch (IOException e) {
+		}
+		totalFramesPerSeconds = 0;
+		totalFrameCaptures = 0;
 		
 		scheduler = Executors.newSingleThreadScheduledExecutor();
 
@@ -51,26 +64,48 @@ public class MainActivity extends Activity {
 				int fps = getFPS(TIME_INTERVAL_NANO_SECONDS);
 				//outputView.setText(Integer.toString(fps));
 				Log.i(TAG, Integer.toString(fps));
+				
+				if(fps > 0){
+					totalFrameCaptures++;
+					totalFramesPerSeconds += fps;
+				}
 			}
-		}, 0, 1, TimeUnit.SECONDS);
+		}, 0, 1000, TimeUnit.MILLISECONDS);
 
 
 	}
 
 	public void stopButtonPress(View view){
 		Toast.makeText(this, "Stopped", Toast.LENGTH_SHORT).show();
+		try {
+			if(process != null){
+				stdin.write("exit\n".getBytes());
+				stdin.flush();
+				stdin.close();
+				process.waitFor();
+				process.destroy();
+			}
+		} catch (InterruptedException e) {
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		
 		if(scheduler != null){
 			scheduler.shutdownNow();
 			scheduler = null;
 
 		}
+		if(totalFrameCaptures != 0){
+			int average = (int) (totalFramesPerSeconds / totalFrameCaptures);
+			outputView.setText(Integer.toString(average));
+		}
+		
 	}
 
 
 	public void getRoot(View view){
-		//		List<String> dummy = new ArrayList<String>();
-		//		dummy.add("ls");
-		//		runAsRoot(dummy);
 		runStaticCommandAsRoot("ls");
 	}
 	
@@ -95,15 +130,15 @@ public class MainActivity extends Activity {
     
 	*/
 	public int getFPS(double timeIntervalNanoSeconds){
-		List<String> output = getFPSCommandOutput();
+		String[] output = getFPSCommandOutput();
 		
-		if(output.size() == 0){
-			return -1;
+		if(output.length == 0){
+			return NO_FPS_CALCULATED;
 		}
 		
 		//First line is not used
 		
-		String lastLine = output.get(128);
+		String lastLine = output[output.length - 1];
 		String[] split = splitLine(lastLine);
 		String lastFrameFinishTimeStr = split[2];
 		
@@ -111,7 +146,7 @@ public class MainActivity extends Activity {
 		int frameCount = 0;
 		
 		for(int i = 1; i <= 128 ; i++){
-			String[] splitted = output.get(i).split("\t");
+			String[] splitted = output[i].split("\t");
 			String thisFrameFinishTimeStr = splitted[2];
 			double thisFrameFirstTime = Double.parseDouble(thisFrameFinishTimeStr);
 			if((lastFrameFinishTime - thisFrameFirstTime) <= timeIntervalNanoSeconds){
@@ -128,40 +163,40 @@ public class MainActivity extends Activity {
 	}
 
 
-	public List<String> getFPSCommandOutput(){
+	public String[] getFPSCommandOutput(){
 		try {
-			process = Runtime.getRuntime().exec("su");
-			stdin = process.getOutputStream();
-			stdout = process.getInputStream();
+
 			
-			stdin.write((FPS_COMMAND + "\n").getBytes());
-			stdin.write("exit\n".getBytes());
+			stdin.write((FPS_COMMAND).getBytes());
+
+
 			stdin.flush();
-			stdin.close();
 
-
-			BufferedReader br =
-					new BufferedReader(new InputStreamReader(stdout));
-
-			
-			ArrayList<String> output = new ArrayList<String>();
-			String line;
-			
-			while ((line = br.readLine()) != null) {
-				output.add(line);
+			byte[] buffer = new byte[BUFF_LEN];
+			int read;
+			String out = new String();
+			//read method will wait forever if there is nothing in the stream
+			//so we need to read it in another way than while((read=stdout.read(buffer))>0)
+			while(true){
+				int bytesAvailable = stdout.available();
+				if(bytesAvailable == 0){
+					throw new Exception();
+				}
+			    read = stdout.read(buffer);
+			    out += new String(buffer, 0, read);
+			    if(read<BUFF_LEN){
+			        break;
+			    }
 			}
 			
-			
-			
-			process.waitFor();
-			process.destroy();
-			
+			String[] lines = out.split("\n");
+			Log.i(TAG, "Num Lines " + lines.length);
 			
 		
-			return output;
+			return lines;
 
 		} catch (Exception ex) {
-			return new ArrayList<String>();
+			return new String[]{};
 		}
 	}
 
