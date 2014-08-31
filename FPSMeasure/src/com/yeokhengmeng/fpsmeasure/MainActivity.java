@@ -146,7 +146,7 @@ public class MainActivity extends Activity {
 		int frameCount = 0;
 		
 		for(int i = 1; i <= 128 ; i++){
-			String[] splitted = output[i].split("\t");
+			String[] splitted = splitLine(output[i]);
 			String thisFrameFinishTimeStr = splitted[2];
 			double thisFrameFirstTime = Double.parseDouble(thisFrameFinishTimeStr);
 			if((lastFrameFinishTime - thisFrameFirstTime) <= timeIntervalNanoSeconds){
